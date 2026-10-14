@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# secrets and identities
+.potluck/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+serviceAccountKey.json
+secrets.yaml
+secrets.json
+.secret
+*.secret
+token.json
+auth.json
+config.local.*
+
+# local data
+*.sqlite
+*.db
+
+# os
+.DS_Store
+Thumbs.db
+
+# python (tooling)
+__pycache__/
