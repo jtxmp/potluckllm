@@ -1,4 +1,5 @@
 // @ts-check
+import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -6,7 +7,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import Hyperswarm from 'hyperswarm'
 import createTestnet from 'hyperdht/testnet.js'
-import { startProvider } from '../src/provider.js'
+import { MAX_QUEUED, startProvider } from '../src/provider.js'
 import { startConsumer } from '../src/consumer.js'
 import { loadOrCreateIdentity, publicKeyFromSeed } from '../src/identity.js'
 import { addMember, createTeam, parseTeam } from '../src/team.js'
@@ -83,6 +84,30 @@ async function connectedPair () {
   return { a, b, t, p, c }
 }
 
+// A member speaking the wire protocol directly, bypassing the consumer's
+// own checks.
+async function rawMember (id, t) {
+  const swarm = new Hyperswarm({ seed: id.seed, bootstrap: testnet.bootstrap })
+  cleanup.push(() => swarm.destroy())
+  const conn = await new Promise((resolve) => {
+    swarm.on('connection', (c) => { c.on('error', () => {}); resolve(c) })
+    swarm.join(t.topic, { server: false, client: true })
+  })
+  const replies = []
+  onMessages(conn, (msg) => replies.push(msg))
+  return { conn, replies }
+}
+
+const POTLUCK = path.resolve(import.meta.dirname, '../bin/potluck.js')
+
+function cli (args, home, cwd = home) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [POTLUCK, ...args], { cwd, env: { ...process.env, HOME: home } }, (err, stdout, stderr) => {
+      resolve({ code: err ? err.code : 0, stdout, stderr })
+    })
+  })
+}
+
 function chat (base, model, stream = true, signal) {
   return fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
@@ -105,7 +130,7 @@ describe('relay between team members', () => {
     const res = await fetch(`${c.base}/v1/models`)
     const body = await res.json()
     expect(res.status).toBe(200)
-    expect(body.data.map((m) => m.id)).toEqual(['fake-1b', 'fake-slow'])
+    expect(body.data.map((m) => m.id)).toEqual(['fake-1b', 'fake-slow', 'fake-stall'])
     expect(body.data[0].owned_by).toBe('m0')
   })
 
@@ -201,14 +226,7 @@ describe('access control', () => {
     const t = team([a, b])
     await provider(a, t)
 
-    const swarm = new Hyperswarm({ seed: b.seed, bootstrap: testnet.bootstrap })
-    cleanup.push(() => swarm.destroy())
-    const conn = await new Promise((resolve) => {
-      swarm.on('connection', (c) => { c.on('error', () => {}); resolve(c) })
-      swarm.join(t.topic, { server: false, client: true })
-    })
-    const replies = []
-    onMessages(conn, (msg) => replies.push(msg))
+    const { conn, replies } = await rawMember(b, t)
     send(conn, { t: 'req', id: 'x', method: 'POST', path: '/api/pull', body: '{"name":"evil"}' })
 
     await waitFor(() => replies.some((m) => m.id === 'x'))
@@ -252,6 +270,107 @@ describe('failure handling', () => {
     controller.abort()
     await waitFor(() => p.logs.has('cancelled'))
     expect(p.logs.has('end')).toBe(false)
+  })
+})
+
+describe('status endpoint', () => {
+  test('lists connected members by name with key prefixes and models', async () => {
+    const { a, c } = await connectedPair()
+    const res = await fetch(`${c.base}/potluck/status`)
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.team).toBe('test')
+    expect(body.self).toHaveLength(8)
+    expect(body.providers).toEqual([{ name: 'm0', key: a.key.slice(0, 8), models: ['fake-1b', 'fake-slow', 'fake-stall'], inFlight: 0 }])
+  })
+})
+
+describe('provider limits', () => {
+  test('runs one upstream request at a time, in order', async () => {
+    const { c, p } = await connectedPair()
+    fake.stats.maxActive = 0
+    const texts = await Promise.all([1, 2, 3].map(async () => sseContent(await (await chat(c.base, 'fake-1b')).text())))
+    expect(texts).toEqual([REPLY, REPLY, REPLY])
+    expect(fake.stats.maxActive).toBe(1)
+    expect(p.logs.has('queued')).toBe(true)
+  })
+
+  test('answers 503 once the queue is full', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    const p = await provider(a, t)
+    const { conn, replies } = await rawMember(b, t)
+    const body = JSON.stringify({ model: 'fake-slow', stream: true, messages: [] })
+    for (let i = 0; i <= MAX_QUEUED + 1; i++) send(conn, { t: 'req', id: `q${i}`, method: 'POST', path: '/v1/chat/completions', body })
+    await waitFor(() => replies.some((m) => m.t === 'err' && m.status === 503))
+    expect(replies.filter((m) => m.t === 'err' && m.status === 503)).toHaveLength(1)
+    expect(p.logs.has('busy')).toBe(true)
+  })
+
+  test('aborts an upstream that goes quiet and tells the client', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    const p = await provider(a, t, { timeoutMs: 300 })
+    const c = await consumer(b, t)
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    const text = await (await chat(c.base, 'fake-stall')).text()
+    expect(text).toContain('upstream sent nothing')
+    expect(p.logs.has('timeout')).toBe(true)
+  })
+})
+
+describe('shared identity', () => {
+  test('a member can run serve and use with the same key', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    await provider(a, t)
+    await provider(b, t)
+    // Consumer reuses b's key, as when one person runs both commands.
+    const c = await consumer(b, t)
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    const res = await chat(c.base, 'fake-1b')
+    expect(sseContent(await res.text())).toBe(REPLY)
+    const status = await (await fetch(`${c.base}/potluck/status`)).json()
+    expect(status.providers.map((x) => x.name)).toEqual(['m0'])
+  })
+})
+
+describe('team commands', () => {
+  test('init creates a private team file with the caller as first member', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-cli-'))
+    const id = await cli(['id'], home)
+    const init = await cli(['team', 'init', 'demo', '--member', 'laptop-a'], home)
+    expect(init.code).toBe(0)
+    const file = path.join(home, 'team.json')
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(data.name).toBe('demo')
+    expect(data.members).toEqual([{ name: 'laptop-a', key: id.stdout.trim() }])
+  })
+
+  test('init refuses to overwrite an existing team file', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-cli-'))
+    await cli(['team', 'init', 'demo'], home)
+    const before = fs.readFileSync(path.join(home, 'team.json'), 'utf8')
+    const again = await cli(['team', 'init', 'other'], home)
+    expect(again.code).toBe(1)
+    expect(again.stderr).toContain('already exists')
+    expect(fs.readFileSync(path.join(home, 'team.json'), 'utf8')).toBe(before)
+  })
+
+  test('add appends a member and rejects bad keys and duplicates', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-cli-'))
+    await cli(['team', 'init', 'demo', '--member', 'a'], home)
+    const b = identity()
+    expect((await cli(['team', 'add', 'laptop-b', b.key.toUpperCase()], home)).code).toBe(0)
+    expect((await cli(['team', 'add', 'x', 'nope'], home)).stderr).toContain('invalid public key')
+    expect((await cli(['team', 'add', 'laptop-c', b.key], home)).stderr).toContain('already a member')
+    const data = JSON.parse(fs.readFileSync(path.join(home, 'team.json'), 'utf8'))
+    expect(data.members.map((m) => m.name)).toEqual(['a', 'laptop-b'])
+    expect(data.members[1].key).toBe(b.key)
   })
 })
 

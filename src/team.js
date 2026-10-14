@@ -49,9 +49,39 @@ export function parseTeam (data) {
   }
 }
 
+/**
+ * @param {string} file
+ * @returns {TeamFile}
+ */
+export function readTeamFile (file) {
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+  parseTeam(data)
+  return data
+}
+
 /** @param {string} file */
 export function readTeam (file) {
   return parseTeam(JSON.parse(fs.readFileSync(file, 'utf8')))
+}
+
+/**
+ * Writes the team file atomically. With `create`, refuses to replace an
+ * existing file so `team init` can't wipe a team by accident.
+ *
+ * @param {string} file
+ * @param {TeamFile} data
+ * @param {{ create?: boolean }} [opts]
+ */
+export function writeTeamFile (file, data, { create = false } = {}) {
+  parseTeam(data)
+  const json = JSON.stringify(data, null, 2) + '\n'
+  if (create) {
+    fs.writeFileSync(file, json, { mode: 0o600, flag: 'wx' })
+    return
+  }
+  const tmp = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, json, { mode: 0o600 })
+  fs.renameSync(tmp, file)
 }
 
 /**

@@ -112,6 +112,10 @@ export async function startConsumer ({ seed, team, port = 11500, bootstrap, log 
       return json(res, 200, { object: 'list', data: listModels() })
     }
 
+    if (req.method === 'GET' && pathname === '/potluck/status') {
+      return json(res, 200, status())
+    }
+
     if (req.method === 'POST' && pathname === '/v1/chat/completions') {
       const body = await readBody(req)
       if (body === null) return fail(res, 413, `request body exceeds ${MAX_BODY_BYTES} bytes`)
@@ -137,6 +141,20 @@ export async function startConsumer ({ seed, team, port = 11500, bootstrap, log 
       }
     }
     return [...seen.values()]
+  }
+
+  /** Connected members and their models (PRD F6). Key prefixes only. */
+  function status () {
+    return {
+      team: team.name,
+      self: shortKey(swarm.keyPair.publicKey),
+      providers: [...providers.values()].map((p) => ({
+        name: p.name,
+        key: p.key.slice(0, 8),
+        models: p.models,
+        inFlight: p.pending.size
+      }))
+    }
   }
 
   /** First connected provider that lists the model (PRD F5). */

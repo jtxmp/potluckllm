@@ -4,7 +4,7 @@ Private AI over peer-to-peer. Use a local LLM on any machine you own, or a teamm
 
 | Field | Value |
 |---|---|
-| Status | Draft v0.3 (M1 complete, 2026-10-14) |
+| Status | Draft v0.4 (M2 complete, 2026-10-14) |
 | Owner | JT |
 | Date | 2026-10-14 |
 | Name | PotluckLLM. Package `potluckllm`, command `potluck`. |
@@ -84,7 +84,7 @@ None of these gives a team "here are the models my teammates host; use them from
 | F5 | `potluck use --team team.json [--port 11500]` | Binds to 127.0.0.1 only. Serves `GET /v1/models` (union across connected providers) and `POST /v1/chat/completions` with streaming. Routes by the `model` field. Returns 503 with a clear message when no provider hosts the model. |
 | F6 | `GET /potluck/status` on the `use` endpoint | Returns JSON listing connected members with name, key prefix and models. Served by the running `use` process, so no IPC is needed. |
 | F7 | Path allow-list on provider | Forwards only `/v1/models` and `/v1/chat/completions`. Every other path returns 404, so Ollama admin routes such as `/api/pull` and `/api/delete` are never reachable. |
-| F8 | Limits | Request body cap (default 1 MB) and upstream timeout (default 120 s). The provider processes one request at a time from a single FIFO queue. |
+| F8 | Limits | Request body cap (default 1 MB) and upstream idle timeout (default 120 s, `--timeout`), answered with 504. The provider processes one request at a time from a single FIFO queue across all members. More than 16 waiting requests get 503. |
 | F9 | Logging | One line per event to stderr: connect, reject (with key prefix), request start, first token, end, error. Includes timings. Never logs prompt or completion content. |
 
 F5 additions: every connection has an `error` listener. If a provider disconnects mid-stream, the consumer returns 502 (or closes the SSE stream with an error event) and the process keeps running. When several providers list the same model, the first connected one wins.
@@ -150,7 +150,7 @@ Transport risk was retired by the D2 spike, so there is no separate spike milest
 | Milestone | Timebox | Exit criteria |
 |---|---|---|
 | M1 Single pair | 1 day | Done 2026-10-14. F1, F4, F5, F9 on the fake upstream, plus parts of F7 (path allow-list) and F8 (1 MB body cap). 17 tests pass on testnet, 5 consecutive clean runs. CLI verified on the public DHT on one machine. CI workflow written, not yet run on GitHub. |
-| M2 Team | 1 day | F2, F3, F6, F7, F8. Mutual allow-list test with a non-member key passes in CI. |
+| M2 Team | 1 day | Done 2026-10-14. F2, F3, F6, F8 complete; F7 completed in M1. 25 tests pass, 5 consecutive clean runs. Queue and timeout tests fail when their feature is disabled (checked). Full demo.md command flow verified on the public DHT on one machine. |
 | M3 Ship | 1 day | Ollama with a 1B to 3B model on the provider. Rehearsal across the 3 demo network pairs. Section 7 numbers recorded from F9 logs. README with "why P2P" section, threat model and 60 s demo GIF. Repo public. |
 | M4 Stretch | Open | P1 items, then P2 by priority. |
 
@@ -166,7 +166,7 @@ Transport risk was retired by the D2 spike, so there is no separate spike milest
 | A slow consumer causes the provider to buffer a whole response (NDJSON has no per-request backpressure) | Low | Responses from a small model are small. The FIFO queue caps concurrent work at one request. Revisit with Protomux if F16 ships. |
 | Unhandled stream errors crash the process (seen in the D2 spike on teardown) | Medium | `error` listener on every connection, covered by the mid-stream disconnect test (D7). |
 | Consumer started before a provider announces waits for Hyperswarm's 10-minute lookup refresh (found in M1) | Fixed | Consumer looks up again every 5 s, backing off to 60 s, while no provider is connected. Regression test in place. On the public DHT the consumer connected 5.6 s after start. |
-| Two processes sharing one identity (a member running `serve` and `use` at once) announce the same key | Medium | Untested. Decide in M2: separate identity per role, or one process for both. |
+| Two processes sharing one identity (a member running `serve` and `use` at once) | Resolved | Supported and tested. Only `serve` announces on the DHT, so the key appears once. Your own `use` does not list your own models, since Hyperswarm skips your own key. Call Ollama directly for those. |
 | Holepunch API changes mid-build | Medium | Exact version pins. Lockfile committed. |
 
 ## 12. Open questions

@@ -12,6 +12,10 @@ const ALLOWED = new Map([
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 
+// Requests waiting behind the one in progress. Beyond this, members get a 503
+// instead of an ever-growing wait (PRD F8).
+export const MAX_QUEUED = 16
+
 /**
  * Shares a local OpenAI-compatible upstream with members of a team.
  *
@@ -19,12 +23,13 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
  *   seed: Buffer,
  *   team: import('./team.js').Team,
  *   upstream?: string,
+ *   timeoutMs?: number,
  *   allowRemoteUpstream?: boolean,
  *   bootstrap?: { host: string, port: number }[],
  *   log: (event: string, fields?: Record<string, unknown>) => void
  * }} opts
  */
-export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:11434', allowRemoteUpstream = false, bootstrap, log }) {
+export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:11434', timeoutMs = 120000, allowRemoteUpstream = false, bootstrap, log }) {
   const upstreamUrl = new URL(upstream)
   if (!allowRemoteUpstream && !LOOPBACK_HOSTS.has(upstreamUrl.hostname)) {
     throw new Error(`upstream ${upstreamUrl.origin} is not on this machine. Pass --allow-remote-upstream to use it anyway.`)
@@ -40,23 +45,39 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
     }
   })
 
+  // One upstream request at a time, in arrival order, across all members.
+  // A small GPU can't serve two generations at once (PRD F8).
+  /** @type {Job[]} */
+  const queue = []
+  let running = false
+
+  async function drain () {
+    if (running) return
+    running = true
+    while (queue.length) await forward(/** @type {Job} */ (queue.shift()))
+    running = false
+  }
+
   swarm.on('connection', (conn) => {
     const peer = shortKey(conn.remotePublicKey)
-    /** @type {Map<string, AbortController>} */
-    const inflight = new Map()
+    /** @type {Map<string, Job>} jobs from this peer, queued or running */
+    const jobs = new Map()
 
     log('connect', { peer, member: team.memberName(conn.remotePublicKey) })
     conn.on('error', (err) => log('conn-error', { peer, err: err.code || err.message }))
     conn.on('close', () => {
-      for (const controller of inflight.values()) controller.abort()
+      for (const job of jobs.values()) cancel(job)
       log('disconnect', { peer })
     })
 
     listModels(upstreamUrl, log).then((models) => send(conn, { t: 'hello', models }))
 
     onMessages(conn, (msg) => {
-      if (msg.t === 'req') forward(conn, peer, msg, inflight)
-      else if (msg.t === 'cancel') inflight.get(String(msg.id))?.abort()
+      if (msg.t === 'req') enqueue(conn, peer, msg, jobs)
+      else if (msg.t === 'cancel') {
+        const job = jobs.get(String(msg.id))
+        if (job) cancel(job)
+      }
     })
   })
 
@@ -64,19 +85,53 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
    * @param {any} conn
    * @param {string} peer
    * @param {{ id: string, method: string, path: string, body?: string }} msg
-   * @param {Map<string, AbortController>} inflight
+   * @param {Map<string, Job>} jobs
    */
-  async function forward (conn, peer, msg, inflight) {
+  function enqueue (conn, peer, msg, jobs) {
     const id = String(msg.id)
     if (ALLOWED.get(msg.path) !== msg.method) {
       log('blocked', { peer, id, path: msg.path })
       send(conn, { t: 'err', id, status: 404, message: 'route not available through potluck' })
       return
     }
+    if (queue.length >= MAX_QUEUED) {
+      log('busy', { peer, id, queued: queue.length })
+      send(conn, { t: 'err', id, status: 503, message: 'provider is busy, try again shortly' })
+      return
+    }
 
-    const controller = new AbortController()
-    inflight.set(id, controller)
+    /** @type {Job} */
+    const job = { conn, peer, id, msg, controller: new AbortController(), done: () => jobs.delete(id) }
+    jobs.set(id, job)
+    queue.push(job)
+    if (running) log('queued', { peer, id, position: queue.length })
+    drain()
+  }
+
+  /** @param {Job} job */
+  function cancel (job) {
+    const index = queue.indexOf(job)
+    if (index !== -1) {
+      queue.splice(index, 1)
+      job.done()
+      log('cancelled', { peer: job.peer, id: job.id, queued: true })
+    } else {
+      job.controller.abort()
+    }
+  }
+
+  /** @param {Job} job */
+  async function forward ({ conn, peer, id, msg, controller, done }) {
     const started = Date.now()
+    let timedOut = false
+    /** @type {NodeJS.Timeout | undefined} */
+    let idle
+    // Idle timeout, not total: a long answer that keeps streaming is fine.
+    const touch = () => {
+      clearTimeout(idle)
+      idle = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
+    }
+    touch()
     log('request', { peer, id, path: msg.path })
 
     try {
@@ -91,6 +146,7 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
 
       let first = true
       for await (const chunk of res.body ?? []) {
+        touch()
         if (first) {
           log('first-chunk', { peer, id, ms: Date.now() - started })
           first = false
@@ -100,11 +156,19 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
       send(conn, { t: 'end', id })
       log('end', { peer, id, status: res.status, ms: Date.now() - started })
     } catch (err) {
-      const cancelled = controller.signal.aborted
-      log(cancelled ? 'cancelled' : 'upstream-error', { peer, id, err: cancelled ? undefined : err.cause?.code || err.message })
-      send(conn, { t: 'err', id, status: 502, message: cancelled ? 'request cancelled' : 'upstream request failed' })
+      if (timedOut) {
+        log('timeout', { peer, id, ms: Date.now() - started })
+        send(conn, { t: 'err', id, status: 504, message: `upstream sent nothing for ${timeoutMs / 1000} s` })
+      } else if (controller.signal.aborted) {
+        log('cancelled', { peer, id })
+        send(conn, { t: 'err', id, status: 499, message: 'request cancelled' })
+      } else {
+        log('upstream-error', { peer, id, err: err.cause?.code || err.message })
+        send(conn, { t: 'err', id, status: 502, message: 'upstream request failed' })
+      }
     } finally {
-      inflight.delete(id)
+      clearTimeout(idle)
+      done()
     }
   }
 
@@ -117,6 +181,17 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
     close: () => swarm.destroy()
   }
 }
+
+/**
+ * @typedef {{
+ *   conn: any,
+ *   peer: string,
+ *   id: string,
+ *   msg: { id: string, method: string, path: string, body?: string },
+ *   controller: AbortController,
+ *   done: () => void
+ * }} Job
+ */
 
 /**
  * Model ids the upstream hosts. An unreachable upstream advertises none.
