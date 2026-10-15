@@ -1,0 +1,235 @@
+{
+  "label": "sim-own-nat",
+  "mode": "consumer",
+  "at": "2026-10-15T02:55:40.733Z",
+  "model": "llama3.2:3b",
+  "node": "v22.22.2",
+  "platform": "linux",
+  "starts": [
+    {
+      "start": 1,
+      "connected": true,
+      "connectMs": 2266.2,
+      "helloMs": 2301,
+      "provider": "5764c223",
+      "requests": [
+        {
+          "status": 200,
+          "ttftMs": 27.3,
+          "totalMs": 991.1,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.5,
+          "totalMs": 994.7,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 40.4,
+          "totalMs": 999.2,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 31.8,
+          "totalMs": 996.1,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 30,
+          "totalMs": 998.3,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 29,
+          "totalMs": 999.1,
+          "chunks": 76
+        }
+      ]
+    },
+    {
+      "start": 2,
+      "connected": true,
+      "connectMs": 2311.9,
+      "helloMs": 2328.6,
+      "provider": "5764c223",
+      "requests": [
+        {
+          "status": 200,
+          "ttftMs": 35.6,
+          "totalMs": 995.4,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 36.6,
+          "totalMs": 997.1,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.1,
+          "totalMs": 987.6,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.4,
+          "totalMs": 990.5,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 32,
+          "totalMs": 994.3,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 29.8,
+          "totalMs": 990.6,
+          "chunks": 76
+        }
+      ]
+    },
+    {
+      "start": 3,
+      "connected": true,
+      "connectMs": 2225.9,
+      "helloMs": 2241.1,
+      "provider": "5764c223",
+      "requests": [
+        {
+          "status": 200,
+          "ttftMs": 39.1,
+          "totalMs": 995.6,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 27.8,
+          "totalMs": 988.9,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.4,
+          "totalMs": 988.4,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 24.3,
+          "totalMs": 987.2,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.4,
+          "totalMs": 988.8,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 27.8,
+          "totalMs": 994.5,
+          "chunks": 76
+        }
+      ]
+    },
+    {
+      "start": 4,
+      "connected": true,
+      "connectMs": 3189.7,
+      "helloMs": 3207.8,
+      "provider": "5764c223",
+      "requests": [
+        {
+          "status": 200,
+          "ttftMs": 35.9,
+          "totalMs": 992.8,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 29.6,
+          "totalMs": 993.3,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.2,
+          "totalMs": 992,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 33.4,
+          "totalMs": 996.2,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.3,
+          "totalMs": 987.7,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.1,
+          "totalMs": 994.1,
+          "chunks": 76
+        }
+      ]
+    },
+    {
+      "start": 5,
+      "connected": true,
+      "connectMs": 2220.3,
+      "helloMs": 2237.3,
+      "provider": "5764c223",
+      "requests": [
+        {
+          "status": 200,
+          "ttftMs": 38.3,
+          "totalMs": 998.9,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 27.5,
+          "totalMs": 986.9,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 29.4,
+          "totalMs": 990.8,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 37,
+          "totalMs": 986.5,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 28.3,
+          "totalMs": 990,
+          "chunks": 76
+        },
+        {
+          "status": 200,
+          "ttftMs": 29.3,
+          "totalMs": 997.1,
+          "chunks": 76
+        }
+      ]
+    }
+  ]
+}

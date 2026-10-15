@@ -1,0 +1,46 @@
+{
+  "label": "sim-provider",
+  "mode": "baseline",
+  "at": "2026-10-15T02:54:47.409Z",
+  "model": "llama3.2:3b",
+  "node": "v22.22.2",
+  "platform": "linux",
+  "requests": [
+    {
+      "status": 200,
+      "ttftMs": 18.1,
+      "totalMs": 973.3,
+      "chunks": 76
+    },
+    {
+      "status": 200,
+      "ttftMs": 16.9,
+      "totalMs": 976.2,
+      "chunks": 76
+    },
+    {
+      "status": 200,
+      "ttftMs": 17.2,
+      "totalMs": 976.4,
+      "chunks": 76
+    },
+    {
+      "status": 200,
+      "ttftMs": 16.1,
+      "totalMs": 976,
+      "chunks": 76
+    },
+    {
+      "status": 200,
+      "ttftMs": 16.7,
+      "totalMs": 977.6,
+      "chunks": 76
+    },
+    {
+      "status": 200,
+      "ttftMs": 16.1,
+      "totalMs": 980.1,
+      "chunks": 76
+    }
+  ]
+}
