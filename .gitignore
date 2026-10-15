@@ -30,3 +30,6 @@ Thumbs.db
 
 # python (tooling)
 __pycache__/
+
+# drafts kept out of the repo
+.linkedin-post/
