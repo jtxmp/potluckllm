@@ -36,7 +36,7 @@ Target total: 60 seconds. Record each machine's screen separately and compose th
 | 5 | 30 to 35 s | B | `curl -s localhost:11500/potluck/status` | "Laptop B sees the models hosted on A." |
 | 6 | 35 to 48 s | B | Streamed chat completion against `localhost:11500/v1` (command below) | "Inference ran on A's GPU. The prompt never touched a third-party server." |
 | 7 | 48 to 56 s | B, then A | Intruder runs `HOME=/tmp/intruder potluck use --team team.json`. A's log shows `reject <key prefix>`. | "A key that isn't on the team gets refused." |
-| 8 | 56 to 60 s | End card | Repo URL and one measured number from the F9 logs | "Open source: github.com/<user>/potluckllm" |
+| 8 | 56 to 60 s | End card | Repo URL and one measured number from the F9 logs | "Open source: github.com/jtxmp/potluckllm" |
 
 `team.json` reaches B off camera. In the edit, a one-second cut with the caption "team.json shared over Signal" covers it.
 

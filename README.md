@@ -11,7 +11,7 @@ Status: working prototype. Tested on Linux with Node 22. See [PRD.md](PRD.md) fo
 Requires Node 22 or later and pnpm. The provider also needs [Ollama](https://ollama.com) (or another OpenAI-compatible server) listening on localhost.
 
 ```sh
-git clone https://github.com/<user>/potluckllm && cd potluckllm
+git clone https://github.com/jtxmp/potluckllm && cd potluckllm
 pnpm install
 alias potluck="node $PWD/bin/potluck.js"   # fish: alias potluck "node $PWD/bin/potluck.js"
 ```
