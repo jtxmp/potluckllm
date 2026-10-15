@@ -25,7 +25,9 @@ export function send (conn, message) {
 
 /**
  * Calls `onMessage` for every complete line. Malformed or oversized input
- * destroys the connection, since a member that sends it is misbehaving.
+ * destroys the connection, since a member that sends it is misbehaving. So
+ * does a message the handler throws on: one bad peer must not take down the
+ * process.
  *
  * @param {import('node:stream').Duplex} conn
  * @param {(message: any) => void} onMessage
@@ -47,7 +49,13 @@ export function onMessages (conn, onMessage) {
         conn.destroy(new Error('malformed message'))
         return
       }
-      if (message && typeof message.t === 'string') onMessage(message)
+      if (!message || typeof message.t !== 'string') continue
+      try {
+        onMessage(message)
+      } catch (err) {
+        conn.destroy(new Error(`protocol error: ${err.message}`))
+        return
+      }
     }
     if (buffer.length > MAX_MESSAGE_BYTES) conn.destroy(new Error('message too large'))
   })

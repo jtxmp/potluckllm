@@ -142,6 +142,7 @@ For the portfolio, track these after launch: GitHub stars, issues opened by peop
 - **Upstream protection.** Path allow-list (F7) and limits (F8) stop members from managing models or exhausting the GPU.
 - **Secrets.** Private keys live in `~/.potluck/` with mode 0600, are never logged and never go in `team.json`. `.gitignore` covers `.potluck/`, `*.key`, `.env*`.
 - **Logging.** No prompts or completions are written to disk or logs. The usage log (F10) stores metadata only.
+- **Security review (2026-10-15).** Scored 71/100. Confirmed findings: web pages could reach the consumer endpoint (cross-site POST and DNS rebinding), a provider could crash a consumer with a malformed reply, and peer-supplied values could forge log lines. Fixes: Host, Origin and content-type checks plus an optional API key on the consumer; validation of provider replies; quoted log values and rate-limited reject lines; a per-member limit of 4 requests, a 600 s total limit and a `max_tokens` cap on the provider; team file reload that disconnects removed members; refusal of a group- or world-writable `~/.potluck`; SHA-pinned actions, Dependabot, gitleaks in CI and as a pre-commit hook; SECURITY.md with private vulnerability reporting. Each fix has a test that fails when the fix is removed. See the README threat model.
 
 ## 10. Milestones
 

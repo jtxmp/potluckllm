@@ -106,3 +106,28 @@ export function addMember (team, name, key) {
   if (team.members.some((m) => m.name === name)) throw new Error(`member name "${name}" is already taken`)
   return { ...team, members: [...team.members, { name, key }] }
 }
+
+/**
+ * Calls `onTeam` with the parsed team each time the file changes, so edits
+ * apply without a restart. Polls the file's metadata once a second, which
+ * also catches the atomic rename that `writeTeamFile` does. A file that
+ * fails to parse is reported and ignored; the previous team stays in force.
+ *
+ * @param {string} file
+ * @param {(team: Team) => void} onTeam
+ * @param {(err: Error) => void} onError
+ * @param {{ intervalMs?: number }} [opts]
+ * @returns {() => void} stops watching
+ */
+export function watchTeamFile (file, onTeam, onError, { intervalMs = 1000 } = {}) {
+  const listener = (/** @type {fs.Stats} */ now, /** @type {fs.Stats} */ before) => {
+    if (now.mtimeMs === before.mtimeMs && now.ino === before.ino && now.size === before.size) return
+    try {
+      onTeam(readTeam(file))
+    } catch (err) {
+      onError(err)
+    }
+  }
+  fs.watchFile(file, { interval: intervalMs }, listener)
+  return () => fs.unwatchFile(file, listener)
+}

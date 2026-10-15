@@ -2,15 +2,17 @@
 import { execFile } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import Hyperswarm from 'hyperswarm'
 import createTestnet from 'hyperdht/testnet.js'
-import { MAX_QUEUED, startProvider } from '../src/provider.js'
+import { MAX_PER_MEMBER, MAX_QUEUED, capTokens, startProvider } from '../src/provider.js'
 import { startConsumer } from '../src/consumer.js'
 import { loadOrCreateIdentity, publicKeyFromSeed } from '../src/identity.js'
-import { addMember, createTeam, parseTeam } from '../src/team.js'
+import { addMember, createTeam, parseTeam, watchTeamFile, writeTeamFile } from '../src/team.js'
+import { createLogger, createRejectLogger } from '../src/log.js'
 import { onMessages, send } from '../src/protocol.js'
 import { REPLY, startFakeOllama } from './fake-ollama.js'
 
@@ -66,9 +68,9 @@ async function provider (id, t, extra = {}) {
   return { node, logs }
 }
 
-async function consumer (id, t) {
+async function consumer (id, t, extra = {}) {
   const logs = logger()
-  const node = await startConsumer({ seed: id.seed, team: t, port: 0, bootstrap: testnet.bootstrap, log: logs.log })
+  const node = await startConsumer({ seed: id.seed, team: t, port: 0, bootstrap: testnet.bootstrap, log: logs.log, ...extra })
   cleanup.push(() => node.close())
   const base = `http://127.0.0.1:${node.port}`
   return { node, logs, base }
@@ -96,6 +98,21 @@ async function rawMember (id, t) {
   const replies = []
   onMessages(conn, (msg) => replies.push(msg))
   return { conn, replies }
+}
+
+// A member running modified provider code: answers every request with
+// whatever `reply(id)` returns.
+async function rawProvider (id, t, reply) {
+  const swarm = new Hyperswarm({ seed: id.seed, bootstrap: testnet.bootstrap })
+  cleanup.push(() => swarm.destroy())
+  swarm.on('connection', (conn) => {
+    conn.on('error', () => {})
+    send(conn, { t: 'hello', models: ['evil'] })
+    onMessages(conn, (msg) => {
+      if (msg.t === 'req') for (const m of reply(msg.id)) send(conn, m)
+    })
+  })
+  await swarm.join(t.topic, { server: true, client: false }).flushed()
 }
 
 const POTLUCK = path.resolve(import.meta.dirname, '../bin/potluck.js')
@@ -187,11 +204,11 @@ describe('consumer errors', () => {
 
   test('400 on invalid JSON, 404 on unknown routes, 413 on oversized bodies', async () => {
     const { c } = await connectedPair()
-    const bad = await fetch(`${c.base}/v1/chat/completions`, { method: 'POST', body: '{nope' })
+    const bad = await fetch(`${c.base}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' })
     expect(bad.status).toBe(400)
     const unknown = await fetch(`${c.base}/api/pull`, { method: 'POST', body: '{}' })
     expect(unknown.status).toBe(404)
-    const big = await fetch(`${c.base}/v1/chat/completions`, { method: 'POST', body: 'x'.repeat(1024 * 1024 + 1) })
+    const big = await fetch(`${c.base}/v1/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'x'.repeat(1024 * 1024 + 1) })
     expect(big.status).toBe(413)
   })
 })
@@ -295,17 +312,74 @@ describe('provider limits', () => {
     expect(p.logs.has('queued')).toBe(true)
   })
 
-  test('answers 503 once the queue is full', async () => {
+  test('limits each member to a few requests at once', async () => {
     const a = identity()
     const b = identity()
     const t = team([a, b])
     const p = await provider(a, t)
     const { conn, replies } = await rawMember(b, t)
     const body = JSON.stringify({ model: 'fake-slow', stream: true, messages: [] })
-    for (let i = 0; i <= MAX_QUEUED + 1; i++) send(conn, { t: 'req', id: `q${i}`, method: 'POST', path: '/v1/chat/completions', body })
-    await waitFor(() => replies.some((m) => m.t === 'err' && m.status === 503))
-    expect(replies.filter((m) => m.t === 'err' && m.status === 503)).toHaveLength(1)
+    for (let i = 0; i < MAX_PER_MEMBER + 2; i++) send(conn, { t: 'req', id: `q${i}`, method: 'POST', path: '/v1/chat/completions', body })
+    await waitFor(() => replies.filter((m) => m.t === 'err' && m.status === 429).length === 2)
+    expect(replies.filter((m) => m.t === 'err').map((m) => m.id)).toEqual([`q${MAX_PER_MEMBER}`, `q${MAX_PER_MEMBER + 1}`])
+    expect(p.logs.events.some((e) => e.event === 'busy' && e.reason === 'member')).toBe(true)
+  })
+
+  test('answers 503 once the shared queue is full', async () => {
+    const a = identity()
+    const members = Array.from({ length: 5 }, identity)
+    const t = team([a, ...members])
+    const p = await provider(a, t)
+    const raws = await Promise.all(members.map((m) => rawMember(m, t)))
+    const body = JSON.stringify({ model: 'fake-slow', stream: true, messages: [] })
+    // 5 members x 4 requests = 20: one runs, 16 wait, 3 are refused.
+    raws.forEach(({ conn }, i) => {
+      for (let j = 0; j < MAX_PER_MEMBER; j++) send(conn, { t: 'req', id: `m${i}-${j}`, method: 'POST', path: '/v1/chat/completions', body })
+    })
+    const refused = () => raws.flatMap((r) => r.replies).filter((m) => m.t === 'err' && m.status === 503)
+    await waitFor(() => refused().length === 20 - 1 - MAX_QUEUED)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(refused()).toHaveLength(20 - 1 - MAX_QUEUED)
     expect(p.logs.has('busy')).toBe(true)
+  })
+
+  test('stops a request that streams past the total time limit', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    const p = await provider(a, t, { maxDurationMs: 300 })
+    const c = await consumer(b, t)
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    const text = await (await chat(c.base, 'fake-slow')).text()
+    expect(text).toContain('exceeded')
+    expect(p.logs.has('too-long')).toBe(true)
+  })
+
+  test('caps max_tokens on every chat request', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    await provider(a, t, { maxTokens: 256 })
+    const c = await consumer(b, t)
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    const post = (extra) => fetch(`${c.base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'fake-1b', stream: false, messages: [], ...extra })
+    }).then((r) => r.text())
+    await post({ max_tokens: 1000000 })
+    expect(fake.bodies.at(-1).max_tokens).toBe(256)
+    await post({})
+    expect(fake.bodies.at(-1).max_tokens).toBe(256)
+    await post({ max_tokens: 50 })
+    expect(fake.bodies.at(-1).max_tokens).toBe(50)
+  })
+
+  test('capTokens rejects bodies that are not JSON objects', () => {
+    expect(capTokens('[1]', 10)).toBeNull()
+    expect(capTokens('nope', 10)).toBeNull()
+    expect(capTokens(undefined, 10)).toBeNull()
+    expect(JSON.parse(capTokens('{"max_completion_tokens":-1}', 10))).toEqual({ max_completion_tokens: 10 })
   })
 
   test('aborts an upstream that goes quiet and tells the client', async () => {
@@ -404,5 +478,204 @@ describe('identity and team file', () => {
     expect(() => addMember(createTeam('t', { name: 'a', key: a.key }), 'b', 'not-a-key')).toThrow(/invalid public key/)
     expect(() => addMember(createTeam('t', { name: 'a', key: a.key }), 'b', a.key)).toThrow(/already a member/)
     expect(() => parseTeam({ name: 't', topic: 'short', members: [] })).toThrow(/topic/)
+  })
+})
+
+describe('local endpoint guard', () => {
+  test('refuses a Host other than localhost, as DNS rebinding would send', async () => {
+    const { c } = await connectedPair()
+    // fetch sets Host itself, so send this one with http.request.
+    const status = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: c.node.port, path: '/potluck/status', headers: { host: `rebind.example:${c.node.port}` } }, (res) => {
+        res.resume()
+        resolve(res.statusCode)
+      }).on('error', reject)
+    })
+    expect(status).toBe(421)
+    expect(c.logs.events.some((e) => e.event === 'refused' && e.reason === 'host')).toBe(true)
+  })
+
+  test('refuses cross-site requests before anything reaches the provider', async () => {
+    const { c } = await connectedPair()
+    const before = fake.calls.length
+    const fromPage = await fetch(`${c.base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ model: 'fake-1b', messages: [] })
+    })
+    expect(fromPage.status).toBe(403)
+    // The form-style request a page can send without a CORS preflight.
+    const simple = await fetch(`${c.base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify({ model: 'fake-1b', messages: [] })
+    })
+    expect(simple.status).toBe(415)
+    expect(fake.calls.length).toBe(before)
+  })
+
+  test('serves an allowed origin, including the CORS preflight', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    await provider(a, t)
+    const c = await consumer(b, t, { allowOrigins: ['http://localhost:3000'] })
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    const preflight = await fetch(`${c.base}/v1/chat/completions`, { method: 'OPTIONS', headers: { origin: 'http://localhost:3000' } })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('http://localhost:3000')
+    const res = await fetch(`${c.base}/v1/models`, { headers: { origin: 'http://localhost:3000' } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  test('requires the API key when one is set', async () => {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    await provider(a, t)
+    const c = await consumer(b, t, { apiKey: 'correct-key' })
+    expect((await fetch(`${c.base}/v1/models`)).status).toBe(401)
+    expect((await fetch(`${c.base}/v1/models`, { headers: { authorization: 'Bearer wrong' } })).status).toBe(401)
+    expect((await fetch(`${c.base}/v1/models`, { headers: { authorization: 'Bearer correct-key' } })).status).toBe(200)
+  })
+})
+
+describe('hostile provider', () => {
+  async function against (reply) {
+    const a = identity()
+    const b = identity()
+    const t = team([a, b])
+    await rawProvider(a, t, reply)
+    const c = await consumer(b, t)
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0))
+    // A broken reply may end the HTTP connection instead of sending a status.
+    const res = await chat(c.base, 'evil', false).catch(() => null)
+    return { c, res }
+  }
+
+  test('an invalid status closes that provider, not the consumer', async () => {
+    const { c, res } = await against((id) => [{ t: 'head', id, status: 'not-a-status', contentType: 'application/json' }])
+    expect(res.status).toBe(502)
+    await waitFor(() => c.logs.has('disconnect'))
+    expect((await fetch(`${c.base}/potluck/status`)).status).toBe(200)
+  })
+
+  test('a content type other than JSON or SSE is refused', async () => {
+    const { c, res } = await against((id) => [
+      { t: 'head', id, status: 200, contentType: 'text/html' },
+      { t: 'chunk', id, d: Buffer.from('<script>alert(1)</script>').toString('base64') },
+      { t: 'end', id }
+    ])
+    expect(res.status).toBe(502)
+    expect(res.headers.get('content-type')).toBe('application/json')
+    expect(await res.text()).not.toContain('<script>')
+    // A bad reply fails that request only; the provider stays connected.
+    expect(c.node.providers.size).toBe(1)
+  })
+
+  test('malformed chunks close that provider, not the consumer', async () => {
+    const { c, res } = await against((id) => [
+      { t: 'head', id, status: 200, contentType: 'application/json' },
+      { t: 'chunk', id, d: 12345 }
+    ])
+    await res?.text().catch(() => {})
+    await waitFor(() => c.logs.has('disconnect'))
+    expect((await fetch(`${c.base}/potluck/status`)).status).toBe(200)
+  })
+})
+
+describe('logging', () => {
+  test('a value from a peer cannot forge a log line', () => {
+    const lines = []
+    const log = createLogger({ write: (line) => lines.push(line) })
+    log('error', { status: '502\n2026-01-01T00:00:00.000Z reject peer=deadbeef', peer: 'abcd1234' })
+    expect(lines).toHaveLength(1)
+    expect(lines[0].trim().split('\n')).toHaveLength(1)
+    expect(lines[0]).toContain('status="502\\n2026')
+    expect(lines[0]).toContain('peer=abcd1234')
+  })
+
+  test('rejected connections are logged at a bounded rate', () => {
+    const events = []
+    let time = 0
+    const logReject = createRejectLogger((event, fields) => events.push({ event, ...fields }), { windowMs: 1000, maxPerWindow: 2, now: () => time })
+    const key = (n) => Buffer.alloc(32, n)
+    logReject(key(1))
+    logReject(key(1))
+    logReject(key(2))
+    logReject(key(3))
+    expect(events.map((e) => e.event)).toEqual(['reject', 'reject'])
+    time = 1000
+    logReject(key(1))
+    expect(events.slice(2)).toEqual([{ event: 'reject-suppressed', count: 2 }, { event: 'reject', peer: '01010101' }])
+  })
+})
+
+describe('team changes without a restart', () => {
+  test('removing a member disconnects them at once', async () => {
+    const { a, b, t, p, c } = await connectedPair()
+    p.node.updateTeam(parseTeam({ name: t.name, topic: t.topic.toString('hex'), members: [{ name: 'm0', key: a.key }] }))
+    await waitFor(() => c.node.providers.size === 0)
+    expect(p.logs.events.some((e) => e.event === 'removed' && e.peer === b.key.slice(0, 8))).toBe(true)
+  })
+
+  test('adding a member who was rejected earlier lets them connect', async () => {
+    const a = identity()
+    const b = identity()
+    const topic = crypto.randomBytes(32).toString('hex')
+    const p = await provider(a, team([a], topic))
+    const c = await consumer(b, team([b, a], topic))
+    await waitFor(() => p.logs.has('reject'))
+    p.node.updateTeam(team([a, b], topic))
+    await waitFor(() => [...c.node.providers.values()].some((x) => x.models.length > 0), 25000)
+  }, 30000)
+
+  test('refuses a changed topic', async () => {
+    const { a, p } = await connectedPair()
+    expect(() => p.node.updateTeam(team([a]))).toThrow(/topic changed/)
+  })
+
+  test('watchTeamFile reports edits, including atomic replacement', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-watch-'))
+    const file = path.join(dir, 'team.json')
+    const a = identity()
+    const data = createTeam('t', { name: 'a', key: a.key })
+    writeTeamFile(file, data, { create: true })
+    const seen = []
+    const errors = []
+    const stop = watchTeamFile(file, (next) => seen.push(next.members.length), (err) => errors.push(err.message), { intervalMs: 50 })
+    cleanup.push(async () => stop())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    writeTeamFile(file, addMember(data, 'b', identity().key))
+    await waitFor(() => seen.includes(2), 5000)
+    fs.writeFileSync(file, '{broken')
+    await waitFor(() => errors.length > 0, 5000)
+  })
+})
+
+describe('local hardening', () => {
+  test('refuses an identity folder other users can write to', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-id-'))
+    fs.chmodSync(dir, 0o777)
+    expect(() => loadOrCreateIdentity(dir)).toThrow(/chmod 700/)
+  })
+
+  test('team init warns when the team file would be committed', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'potluck-cli-'))
+    await new Promise((resolve) => execFile('git', ['init', '-q'], { cwd: home }, resolve))
+    const warned = await cli(['team', 'init', 'demo'], home)
+    expect(warned.stderr).toContain('.gitignore')
+    fs.rmSync(path.join(home, 'team.json'))
+    fs.writeFileSync(path.join(home, '.gitignore'), 'team.json\n')
+    const quiet = await cli(['team', 'init', 'demo'], home)
+    expect(quiet.code).toBe(0)
+    expect(quiet.stderr).not.toContain('.gitignore')
+  })
+
+  test('logs a warning for a remote upstream over plain HTTP', async () => {
+    const a = identity()
+    const p = await provider(a, team([a]), { upstream: 'http://192.0.2.1:11434', allowRemoteUpstream: true })
+    expect(p.logs.events).toContainEqual({ event: 'insecure-upstream', upstream: 'http://192.0.2.1:11434' })
   })
 })

@@ -37,6 +37,11 @@ export function publicKeyFromSeed (seed) {
 export function loadOrCreateIdentity (dir = defaultIdentityDir()) {
   const file = path.join(dir, 'identity.json')
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  // Another user who can write here could replace the identity file.
+  const dirMode = fs.statSync(dir).mode & 0o777
+  if (dirMode & 0o022) {
+    throw new Error(`${dir} is writable by other users (mode ${dirMode.toString(8)}). Run: chmod 700 ${dir}`)
+  }
 
   let created = false
   if (!fs.existsSync(file)) {

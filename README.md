@@ -47,7 +47,7 @@ curl http://127.0.0.1:11500/v1/chat/completions \
   -d '{"model":"llama3.2:3b","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Any tool that accepts an OpenAI base URL works: set it to `http://127.0.0.1:11500/v1` and use any API key string.
+Any tool that accepts an OpenAI base URL works: set it to `http://127.0.0.1:11500/v1`. The API key can be any string, unless you start `use` with `POTLUCK_API_KEY` set, in which case it must match. Browser-based tools need `--allow-origin <their origin>`.
 
 ## Why peer-to-peer
 
@@ -89,15 +89,20 @@ Sources for the table, checked 2026-10-14: [ngrok pricing](https://ngrok.com/pri
 
 ## Threat model
 
-PotluckLLM protects a team from outsiders on the internet. It does not protect members from each other.
+PotluckLLM protects a team from outsiders on the internet and from web pages running in a member's browser. It does not protect members from each other. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-- **Outsiders** cannot connect. A connection from a key outside `team.json` is dropped during the handshake, and the provider logs `reject peer=<key prefix>`. A leaked topic lets an outsider see that peers exist, but not connect.
+- **Outsiders cannot connect.** Both sides check the remote public key against `team.json` before any data flows. The provider checks it before sharing any address, so a rejected outsider never learns its IP. The consumer checks it before dialling, so it never contacts a non-member.
+- **A leaked topic reveals little.** Someone holding the topic can look it up on the DHT and learn each provider's public key and the DHT nodes relaying for it, and can make providers spend a handshake on each attempt. They can't learn addresses or connect. Rejections are logged at most once per key per minute, so they can't flood the log.
 - **A provider reads your prompts.** It runs the model, so it sees everything it processes. Only send material you would show that person.
+- **Web pages cannot use your endpoint.** The consumer listens on 127.0.0.1 and also refuses requests for any other host name (DNS rebinding), requests carrying an `Origin` header (other sites) unless you allow that origin with `--allow-origin`, and chat requests that aren't `application/json`. Set `POTLUCK_API_KEY` to also require an API key, which keeps out other users of the same machine.
+- **A faulty or hostile provider cannot crash your consumer.** Replies are checked before they reach the HTTP response: status codes, content types (JSON or server-sent events only) and data fields. A reply that breaks the protocol closes that provider's connection and fails its requests.
 - **Members cannot manage the provider's models.** Only `GET /v1/models` and `POST /v1/chat/completions` are forwarded. Ollama admin routes such as `/api/pull` and `/api/delete` return 404.
-- **Members cannot exhaust the GPU.** The provider runs one request at a time, queues up to 16, answers 503 beyond that, and aborts a request after 120 s with no output (`--timeout`).
-- **Local exposure is minimal.** The consumer endpoint binds to 127.0.0.1. The provider refuses a non-loopback upstream unless you pass `--allow-remote-upstream`.
-- **Nothing sensitive is logged.** Logs hold event names, key prefixes, request ids and timings. Prompts and completions are never written to disk.
-- **Removing a member** means deleting their entry from `team.json`, sending the new file to everyone, and restarting `serve` and `use`. The team file is read once at startup.
+- **No member can monopolise a provider.** The provider runs one request at a time, queues up to 16, and allows each member 4 at once. It caps `max_tokens` (`--max-tokens`, default 4096), aborts a request after 120 s with no output (`--timeout`) and after 600 s in total (`--max-duration`).
+- **The provider stays local.** It refuses a non-loopback upstream unless you pass `--allow-remote-upstream`, and logs `insecure-upstream` if that upstream uses plain HTTP.
+- **Nothing sensitive is logged.** Logs hold event names, key prefixes, request ids and timings. Prompts and completions are never written to disk. Values that came from a peer are quoted, so they can't forge a log line.
+- **Removing a member takes effect at once.** `serve` and `use` reload `team.json` when it changes and disconnect anyone no longer listed. Send the updated file to every member.
+- **Keys are stored like SSH keys without a passphrase.** The private seed is in `~/.potluck/identity.json`, unencrypted. Potluck refuses to start if that file is readable, or its folder writable, by other users. Anyone who can read your home directory as you can use your identity.
+- **Team files are not secrets, but keep them private.** `team.json` holds the topic and member list. `team init` warns if it would be committed to git.
 
 ## Measurements
 
@@ -147,12 +152,15 @@ Both commands write one line per event to stderr:
 ## Development
 
 ```sh
-pnpm test                    # 25 integration tests on a local DHT testnet, no GPU or internet needed
+pnpm test                    # integration tests on a local DHT testnet, no GPU or internet needed
 node test/fake-ollama.js     # fake OpenAI-compatible upstream on :11434
 node scripts/rehearse.js     # measure connect time and latency across real networks (see the file header)
 scripts/simnet.sh --profile hotspot -- <command>   # run a command in a simulated separate network (Linux, no root)
 vhs demo/demo.tape           # re-record the demo GIF (needs vhs, ttyd, tmux, pasta, Ollama)
+git config core.hooksPath .githooks   # scan each commit for secrets (needs gitleaks)
 ```
+
+CI runs the tests on Linux and macOS, `pnpm audit`, and a gitleaks scan of every commit. Dependabot proposes dependency and action updates once a release is 14 days old.
 
 ## License
 

@@ -3,6 +3,8 @@ node_modules/
 
 # secrets and identities
 .potluck/
+# team files hold the topic and member list
+team.json
 .env
 .env.*
 *.pem

@@ -15,6 +15,8 @@ export const MODELS = ['fake-1b', 'fake-slow', 'fake-stall']
 /** @param {number} [port] */
 export async function startFakeOllama (port = 0) {
   const calls = []
+  // Parsed chat request bodies, to check what the provider forwards.
+  const bodies = []
   // Concurrent chat completions, to check the provider's queue.
   const stats = { active: 0, maxActive: 0 }
 
@@ -30,7 +32,9 @@ export async function startFakeOllama (port = 0) {
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
       let body = ''
       for await (const chunk of req) body += chunk
-      const { model, stream } = JSON.parse(body)
+      const parsed = JSON.parse(body)
+      bodies.push(parsed)
+      const { model, stream } = parsed
       stats.maxActive = Math.max(stats.maxActive, ++stats.active)
       res.on('close', () => stats.active--)
 
@@ -73,6 +77,7 @@ export async function startFakeOllama (port = 0) {
   return {
     url: `http://127.0.0.1:${address.port}`,
     calls,
+    bodies,
     stats,
     close: () => new Promise((resolve) => {
       server.closeAllConnections()
