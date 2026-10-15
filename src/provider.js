@@ -64,7 +64,10 @@ export async function startProvider ({ seed, team, upstream = 'http://127.0.0.1:
     const jobs = new Map()
 
     log('connect', { peer, member: team.memberName(conn.remotePublicKey) })
-    conn.on('error', (err) => log('conn-error', { peer, err: err.code || err.message }))
+    // A peer that exits resets the stream. The 'disconnect' line covers it.
+    conn.on('error', (err) => {
+      if (err.code !== 'ECONNRESET') log('conn-error', { peer, err: err.code || err.message })
+    })
     conn.on('close', () => {
       for (const job of jobs.values()) cancel(job)
       log('disconnect', { peer })

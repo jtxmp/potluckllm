@@ -2,6 +2,7 @@
   "name": "potluckllm",
   "version": "0.1.0",
   "description": "Your team's private LLMs, shared peer-to-peer.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "potluck": "bin/potluck.js"
@@ -15,7 +16,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "fake-ollama": "node test/fake-ollama.js"
+    "fake-ollama": "node test/fake-ollama.js",
+    "rehearse": "node scripts/rehearse.js"
   },
   "dependencies": {
     "hyperswarm": "4.17.2"

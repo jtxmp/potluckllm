@@ -4,7 +4,7 @@ Private AI over peer-to-peer. Use a local LLM on any machine you own, or a teamm
 
 | Field | Value |
 |---|---|
-| Status | Draft v0.4 (M2 complete, 2026-10-14) |
+| Status | Draft v0.5 (M2 complete, M3 in progress, 2026-10-14) |
 | Owner | JT |
 | Date | 2026-10-14 |
 | Name | PotluckLLM. Package `potluckllm`, command `potluck`. |
@@ -108,7 +108,7 @@ F5 additions: every connection has an `error` listener. If a provider disconnect
 
 ## 7. Success metrics
 
-Targets marked (H) are hypotheses to confirm or revise during the M3 rehearsal. The only figure measured so far: two Hyperswarm peers on this machine, over the public DHT, connected in 4.8 s (2026-10-14).
+Targets marked (H) are hypotheses to confirm or revise during the M3 rehearsal. Measured so far, all on one machine over the public DHT (2026-10-14): two Hyperswarm peers connected in 4.8 s. With real Ollama (`llama3.2:3b`, RTX 3050 Ti), median time to first token was 17.5 ms direct and 20.5 ms through potluck, six runs each. That 3 ms covers potluck's own overhead, not network latency.
 
 | Metric | Target |
 |---|---|
@@ -151,7 +151,7 @@ Transport risk was retired by the D2 spike, so there is no separate spike milest
 |---|---|---|
 | M1 Single pair | 1 day | Done 2026-10-14. F1, F4, F5, F9 on the fake upstream, plus parts of F7 (path allow-list) and F8 (1 MB body cap). 17 tests pass on testnet, 5 consecutive clean runs. CLI verified on the public DHT on one machine. CI workflow written, not yet run on GitHub. |
 | M2 Team | 1 day | Done 2026-10-14. F2, F3, F6, F8 complete; F7 completed in M1. 25 tests pass, 5 consecutive clean runs. Queue and timeout tests fail when their feature is disabled (checked). Full demo.md command flow verified on the public DHT on one machine. |
-| M3 Ship | 1 day | Ollama with a 1B to 3B model on the provider. Rehearsal across the 3 demo network pairs. Section 7 numbers recorded from F9 logs. README with "why P2P" section, threat model and 60 s demo GIF. Repo public. |
+| M3 Ship | 1 day | In progress. Done: Ollama 0.35.1 with `llama3.2:3b` (100% GPU, bound to 127.0.0.1), end-to-end run through potluck on the public DHT on one machine, README and AI-WORKFLOW.md drafted. Remaining: cross-network rehearsal, demo GIF, LICENSE, repo public, CI run. Plan: Ollama with a 1B to 3B model on the provider. Rehearsal across the 3 demo network pairs. Section 7 numbers recorded from F9 logs. README with "why P2P" section, threat model and 60 s demo GIF. Repo public. |
 | M4 Stretch | Open | P1 items, then P2 by priority. |
 
 **Cut line:** if M2 overruns its timebox, ship M3 with one provider and a `--allow <key>` flag in place of `team.json`. Team files, discovery and the status endpoint move to v1.1.

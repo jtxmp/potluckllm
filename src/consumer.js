@@ -55,7 +55,10 @@ export async function startConsumer ({ seed, team, port = 11500, bootstrap, log 
     providers.set(key, provider)
     log('connect', { peer, member: provider.name })
 
-    conn.on('error', (err) => log('conn-error', { peer, err: err.code || err.message }))
+    // A peer that exits resets the stream. The 'disconnect' line covers it.
+    conn.on('error', (err) => {
+      if (err.code !== 'ECONNRESET') log('conn-error', { peer, err: err.code || err.message })
+    })
     conn.on('close', () => {
       for (const request of provider.pending.values()) request.fail('provider disconnected')
       // Hyperswarm can replace a connection; only forget the provider if this
