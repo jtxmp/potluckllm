@@ -1,5 +1,6 @@
 // @ts-check
-// Fake OpenAI-compatible upstream for development and tests (PRD D7).
+// Fake OpenAI-compatible upstream for `potluck try`, development and tests
+// (PRD D7). Lets anyone see potluck work without a GPU or Ollama.
 //
 //   fake-1b     streams REPLY one word per SSE event
 //   fake-slow   streams 200 events, 50 ms apart, for disconnect tests
@@ -13,7 +14,7 @@ export const REPLY = 'Ship the smaller scope first and measure.'
 export const MODELS = ['fake-1b', 'fake-slow', 'fake-stall']
 
 /** @param {number} [port] */
-export async function startFakeOllama (port = 0) {
+export async function startFakeUpstream (port = 0) {
   const calls = []
   // Parsed chat request bodies, to check what the provider forwards.
   const bodies = []
@@ -87,6 +88,6 @@ export async function startFakeOllama (port = 0) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const fake = await startFakeOllama(Number(process.argv[2] ?? 11434))
+  const fake = await startFakeUpstream(Number(process.argv[2] ?? 11434))
   console.error(`fake upstream on ${fake.url} (models: ${MODELS.join(', ')})`)
 }

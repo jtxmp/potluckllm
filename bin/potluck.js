@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 // @ts-check
 import { execFileSync } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import { parseArgs } from 'node:util'
-import { loadOrCreateIdentity, defaultIdentityDir } from '../src/identity.js'
-import { addMember, createTeam, readTeam, readTeamFile, watchTeamFile, writeTeamFile } from '../src/team.js'
+import { loadOrCreateIdentity, defaultIdentityDir, publicKeyFromSeed } from '../src/identity.js'
+import { addMember, createTeam, parseTeam, readTeam, readTeamFile, watchTeamFile, writeTeamFile } from '../src/team.js'
 import { startProvider } from '../src/provider.js'
 import { startConsumer } from '../src/consumer.js'
 import { createLogger } from '../src/log.js'
+import { MODELS, startFakeUpstream } from '../src/fake-upstream.js'
 
-const USAGE = `potluck: your team's private LLMs, shared peer-to-peer
+const USAGE = `potluck: share access to local LLMs privately, peer-to-peer
 
 Usage:
+  potluck try [--port <n>]                     Try it on one machine: a provider, a consumer and a
+                                               fake model, connected over the real DHT. No GPU needed.
   potluck id                                   Print your public key (creates it on first run)
   potluck team init <team-name> [--member <name>]
                                                Create a team file with you as the first member
@@ -86,6 +90,11 @@ async function main () {
     return
   }
 
+  if (command === 'try') {
+    await tryLocally()
+    return
+  }
+
   if (command === 'team') {
     teamCommand(positionals.slice(1))
     return
@@ -137,6 +146,51 @@ async function main () {
   }
 
   throw new Error(`unknown command "${command}". Run: potluck --help`)
+}
+
+/**
+ * Runs a provider and a consumer in this process with throwaway keys, the
+ * provider serving the fake upstream. They still find each other and connect
+ * through the public HyperDHT, so this shows the real path with no GPU.
+ */
+async function tryLocally () {
+  const fake = await startFakeUpstream(0)
+  const providerSeed = crypto.randomBytes(32)
+  const consumerSeed = crypto.randomBytes(32)
+  const team = parseTeam({
+    name: 'try',
+    topic: crypto.randomBytes(32).toString('hex'),
+    members: [
+      { name: 'provider', key: publicKeyFromSeed(providerSeed).toString('hex') },
+      { name: 'you', key: publicKeyFromSeed(consumerSeed).toString('hex') }
+    ]
+  })
+  const bootstrap = parseBootstrap(values.bootstrap)
+  const as = (side) => (event, fields) => log(event, { side, ...fields })
+
+  const provider = await startProvider({ seed: providerSeed, team, upstream: fake.url, bootstrap, log: as('provider') })
+  const consumer = await startConsumer({ seed: consumerSeed, team, port: parsePort(values.port), bootstrap, log: as('consumer') })
+  const shutdown = () => {
+    log('shutdown')
+    Promise.all([consumer.close(), provider.close(), fake.close()]).then(() => process.exit(0), () => process.exit(1))
+  }
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
+
+  const started = Date.now()
+  while (![...consumer.providers.values()].some((p) => p.models.length)) {
+    if (Date.now() - started > 60000) throw new Error('the provider did not connect within 60 s. Is UDP blocked on this network?')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  const base = `http://127.0.0.1:${consumer.port}`
+  console.log(`
+Connected over the HyperDHT in ${((Date.now() - started) / 1000).toFixed(1)} s, with throwaway keys and a fake model (${MODELS[0]}).
+Your endpoint is ${base}/v1. Try it in another terminal:
+
+  curl ${base}/v1/chat/completions -H 'content-type: application/json' \\
+    -d '{"model":"${MODELS[0]}","messages":[{"role":"user","content":"hi"}]}'
+
+Press Ctrl-C to stop. To share real models, see: https://github.com/jtxmp/potluckllm#quickstart`)
 }
 
 /** @param {string[]} args */

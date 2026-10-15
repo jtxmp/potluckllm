@@ -1,5 +1,5 @@
 // @ts-check
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -14,7 +14,7 @@ import { loadOrCreateIdentity, publicKeyFromSeed } from '../src/identity.js'
 import { addMember, createTeam, parseTeam, watchTeamFile, writeTeamFile } from '../src/team.js'
 import { createLogger, createRejectLogger } from '../src/log.js'
 import { onMessages, send } from '../src/protocol.js'
-import { REPLY, startFakeOllama } from './fake-ollama.js'
+import { REPLY, startFakeUpstream } from '../src/fake-upstream.js'
 
 let testnet
 let fake
@@ -22,7 +22,7 @@ const cleanup = []
 
 beforeAll(async () => {
   testnet = await createTestnet(3)
-  fake = await startFakeOllama()
+  fake = await startFakeUpstream()
 })
 
 afterEach(async () => {
@@ -409,6 +409,20 @@ describe('shared identity', () => {
     expect(sseContent(await res.text())).toBe(REPLY)
     const status = await (await fetch(`${c.base}/potluck/status`)).json()
     expect(status.providers.map((x) => x.name)).toEqual(['m0'])
+  })
+})
+
+describe('try command', () => {
+  test('connects a throwaway provider and consumer and answers', async () => {
+    const bootstrap = testnet.bootstrap.map((n) => `${n.host}:${n.port}`).join(',')
+    const child = spawn(process.execPath, [POTLUCK, 'try', '--port', '0', '--bootstrap', bootstrap])
+    cleanup.push(async () => { child.kill('SIGINT') })
+    let out = ''
+    child.stdout.on('data', (d) => { out += d })
+    await waitFor(() => out.includes('/v1'), 20000)
+    const base = /(http:\/\/127\.0\.0\.1:\d+)\/v1/.exec(out)[1]
+    const res = await chat(base, 'fake-1b', false)
+    expect((await res.json()).choices[0].message.content).toBe(REPLY)
   })
 })
 

@@ -1,8 +1,29 @@
 {
   "name": "potluckllm",
-  "version": "0.1.0",
-  "description": "Your team's private LLMs, shared peer-to-peer.",
+  "version": "0.1.1",
+  "description": "Share access to local LLMs privately, peer-to-peer.",
   "license": "MIT",
+  "author": "JT (https://github.com/jtxmp)",
+  "homepage": "https://github.com/jtxmp/potluckllm#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jtxmp/potluckllm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jtxmp/potluckllm/issues"
+  },
+  "keywords": [
+    "p2p",
+    "peer-to-peer",
+    "hyperswarm",
+    "holepunch",
+    "ollama",
+    "llm",
+    "local-llm",
+    "openai-compatible",
+    "self-hosted",
+    "privacy"
+  ],
   "type": "module",
   "bin": {
     "potluck": "bin/potluck.js"
@@ -16,8 +37,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "fake-ollama": "node test/fake-ollama.js",
-    "rehearse": "node scripts/rehearse.js"
+    "fake-upstream": "node src/fake-upstream.js",
+    "rehearse": "node scripts/rehearse.js",
+    "prepublishOnly": "pnpm test"
   },
   "dependencies": {
     "hyperswarm": "4.17.2"

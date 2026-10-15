@@ -1,0 +1,36 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The stderr lines from `potluck serve` or `potluck use` around the problem. They hold no prompts or completions, but you may want to replace team and member names.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `potluck --version`, or the commit you're on.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15, Node 22.22
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: Networks
+      description: For connection problems, the network type on each side (home broadband, office, phone hotspot, VPN).

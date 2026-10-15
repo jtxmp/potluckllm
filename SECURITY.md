@@ -8,7 +8,7 @@ Include what you found, how to reproduce it, and what an attacker gains. This is
 
 ## What PotluckLLM defends against
 
-The threat model is in the [README](README.md#threat-model). In short: PotluckLLM protects a team from outsiders on the internet and from web pages running in a member's browser. It does not protect members from each other, because a provider necessarily sees the prompts it processes.
+The full threat model is in [docs/threat-model.md](docs/threat-model.md). In short: PotluckLLM protects a team from outsiders on the internet and from web pages running in a member's browser. It does not protect members from each other, because a provider necessarily sees the prompts it processes.
 
 In scope:
 

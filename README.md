@@ -1,21 +1,39 @@
 # PotluckLLM
 
-Share local LLMs with your team over peer-to-peer connections. A teammate's GPU machine runs Ollama. You run `potluck use` on your laptop and get an OpenAI-compatible endpoint at `http://127.0.0.1:11500/v1`. Requests travel over an encrypted, hole-punched [Hyperswarm](https://github.com/holepunchto/hyperswarm) connection. There is no cloud API, no open port, no account and no server in the data path. Only public keys listed in the team file can connect, in either direction.
+[![test](https://github.com/jtxmp/potluckllm/actions/workflows/test.yml/badge.svg)](https://github.com/jtxmp/potluckllm/actions/workflows/test.yml)
+[![npm](https://img.shields.io/npm/v/potluckllm)](https://www.npmjs.com/package/potluckllm)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](package.json)
+
+**Use your teammate's GPU from your laptop, on any network, without accounts or open ports.**
+
+A teammate's machine runs Ollama and `potluck serve`. You run `potluck use` and get an OpenAI-compatible endpoint at `http://127.0.0.1:11500/v1`, so the tools you already use work unchanged. The two machines find each other and connect directly through NAT with [Hyperswarm](https://github.com/holepunchto/hyperswarm), encrypted end to end. Only public keys listed in your team file can connect, and no cloud service sees your prompts.
+
+In a simulated hotspot network with 80 ms of delay and 1% packet loss, a consumer reached the provider in about 3 s and potluck added 89 ms to the time to first token ([measurements](#measurements)).
+
+**Who it's for**
+
+- A small team with one GPU machine that everyone wants to use for private AI work, without sending code or customer data to a cloud API.
+- You, reaching the GPU at home from a laptop at the office or a café.
 
 ![Demo: laptop A shares llama3.2:3b, laptop B on a separate simulated network uses it, and a key outside the team is rejected](demo/demo.gif)
 
-*Recorded on one machine. Laptop B runs in a simulated separate network (its own NAT, no route to A's LAN, 80 ms added delay, 1% loss) made with [`scripts/simnet.sh`](scripts/simnet.sh). Both sides use the public HyperDHT and the real model. Reproduce with `vhs demo/demo.tape`.*
+*Laptop A shares `llama3.2:3b`. Laptop B, on a separate network, lists it, streams an answer, and then an unknown key is rejected. Recorded on one machine, with laptop B in a simulated network (own NAT, no route to A's LAN, 80 ms delay, 1% loss) made by [`scripts/simnet.sh`](scripts/simnet.sh). Reproduce with `vhs demo/demo.tape`.*
 
-Status: working prototype. Tested on Linux with Node 22. See [PRD.md](PRD.md) for scope and decisions.
+## Try it in a minute, no GPU needed
+
+```sh
+npx potluckllm try
+```
+
+This starts a provider, a consumer and a fake model on your machine with throwaway keys. They still find each other and connect through the public DHT, so you see the real path. The command prints a `curl` line to send a request through it.
 
 ## Quickstart
 
-Requires Node 22 or later and pnpm. The provider also needs [Ollama](https://ollama.com) (or another OpenAI-compatible server) listening on localhost.
+Requires Node 22 or later. The provider also needs [Ollama](https://ollama.com), or another OpenAI-compatible server, listening on localhost.
 
 ```sh
-git clone https://github.com/jtxmp/potluckllm && cd potluckllm
-pnpm install
-alias potluck="node $PWD/bin/potluck.js"   # fish: alias potluck "node $PWD/bin/potluck.js"
+npm install -g potluckllm      # or: pnpm add -g potluckllm
 ```
 
 **Every member** prints their public key and sends it to whoever manages the team:
@@ -42,12 +60,37 @@ potluck serve        # reads ./team.json, forwards to http://127.0.0.1:11434
 ```sh
 potluck use          # http://127.0.0.1:11500/v1
 curl http://127.0.0.1:11500/potluck/status
-curl http://127.0.0.1:11500/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"model":"llama3.2:3b","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Any tool that accepts an OpenAI base URL works: set it to `http://127.0.0.1:11500/v1`. The API key can be any string, unless you start `use` with `POTLUCK_API_KEY` set, in which case it must match. Browser-based tools need `--allow-origin <their origin>`.
+A new teammate needs three commands: install, `potluck id`, and `potluck use` once they have the team file.
+
+## Use it from your tools
+
+Point any OpenAI-compatible client at `http://127.0.0.1:11500/v1`. The API key can be any string, unless you start `use` with `POTLUCK_API_KEY` set, in which case it must match.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:11500/v1", api_key="potluck")
+reply = client.chat.completions.create(
+    model="llama3.2:3b",
+    messages=[{"role": "user", "content": "Summarise this design doc"}],
+)
+print(reply.choices[0].message.content)
+```
+
+```js
+import OpenAI from 'openai'
+
+const client = new OpenAI({ baseURL: 'http://127.0.0.1:11500/v1', apiKey: 'potluck' })
+const reply = await client.chat.completions.create({
+  model: 'llama3.2:3b',
+  messages: [{ role: 'user', content: 'Summarise this design doc' }]
+})
+console.log(reply.choices[0].message.content)
+```
+
+Both snippets were tested against `potluck try`, including streaming in Python. Editors and chat apps that take an OpenAI base URL work the same way. Guides for [Continue](https://github.com/jtxmp/potluckllm/issues/8) and [Open WebUI](https://github.com/jtxmp/potluckllm/issues/9) are open issues, if you'd like to write one. Tools that call the endpoint from a browser page need `potluck use --allow-origin <their origin>`.
 
 ## Why peer-to-peer
 
@@ -60,7 +103,7 @@ The usual ways to reach a GPU machine on another network, and what each costs:
 | [Tailscale](https://tailscale.com) | Direct or via Tailscale relays | Members of the tailnet | Every user signs in through an identity provider. Access is network-level unless ACLs narrow it. Free plan: 6 users |
 | [Holesail](https://holesail.io) | Direct, P2P | Anyone holding the shared connection key | Forwards one port. Access comes from holding the key, and the docs describe no per-user identity |
 | [AntSeed](https://github.com/AntSeed/antseed) | Direct, P2P | Any buyer on an open market | Built for paid inference between strangers (USDC payments, reputation scores), not for a private team |
-| **PotluckLLM** | Direct, P2P | Public keys in `team.json` | Members must trust each other (see threat model) |
+| **PotluckLLM** | Direct, P2P | Public keys in `team.json` | Members must trust each other (see [threat model](docs/threat-model.md)) |
 
 Holepunch's stack fits this problem for three reasons. HyperDHT hole-punches through home routers and mobile NAT, so nobody opens a port. Every Hyperswarm connection is Noise-encrypted and authenticated by Ed25519 public key, so the allow-list check is a lookup on the remote key before any data flows. A shared random topic lets members find each other without a server that knows who is on the team.
 
@@ -83,26 +126,20 @@ Sources for the table, checked 2026-10-14: [ngrok pricing](https://ngrok.com/pri
 - `potluck id` creates an Ed25519 keypair in `~/.potluck/identity.json` (mode 0600).
 - `team.json` holds a random 32-byte topic and each member's name and public key. It holds no secrets.
 - Providers announce on the topic. Consumers look it up, retrying with backoff until a provider appears.
-- Both sides reject any connection whose public key is not in `team.json`.
-- Requests and streamed responses travel as newline-delimited JSON over the encrypted stream.
-- The consumer routes each request to a provider that lists the requested model.
+- Both sides reject any connection whose public key is not in `team.json`, and pick up edits to the file without a restart.
+- Requests and streamed responses travel as newline-delimited JSON over the encrypted stream. The consumer routes each request to a provider that lists the requested model.
+- Both commands log one line per event to stderr, such as `connect peer=56d29cb3 member=laptop-b` or `reject peer=ba11aa2b`, with timings and no prompt content.
 
-## Threat model
+## Security
 
-PotluckLLM protects a team from outsiders on the internet and from web pages running in a member's browser. It does not protect members from each other. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+PotluckLLM protects a team from outsiders on the internet and from web pages running in a member's browser. It does not protect members from each other: a provider runs the model, so it sees the prompts it processes.
 
-- **Outsiders cannot connect.** Both sides check the remote public key against `team.json` before any data flows. The provider checks it before sharing any address, so a rejected outsider never learns its IP. The consumer checks it before dialling, so it never contacts a non-member.
-- **A leaked topic reveals little.** Someone holding the topic can look it up on the DHT and learn each provider's public key and the DHT nodes relaying for it, and can make providers spend a handshake on each attempt. They can't learn addresses or connect. Rejections are logged at most once per key per minute, so they can't flood the log.
-- **A provider reads your prompts.** It runs the model, so it sees everything it processes. Only send material you would show that person.
-- **Web pages cannot use your endpoint.** The consumer listens on 127.0.0.1 and also refuses requests for any other host name (DNS rebinding), requests carrying an `Origin` header (other sites) unless you allow that origin with `--allow-origin`, and chat requests that aren't `application/json`. Set `POTLUCK_API_KEY` to also require an API key, which keeps out other users of the same machine.
-- **A faulty or hostile provider cannot crash your consumer.** Replies are checked before they reach the HTTP response: status codes, content types (JSON or server-sent events only) and data fields. A reply that breaks the protocol closes that provider's connection and fails its requests.
-- **Members cannot manage the provider's models.** Only `GET /v1/models` and `POST /v1/chat/completions` are forwarded. Ollama admin routes such as `/api/pull` and `/api/delete` return 404.
-- **No member can monopolise a provider.** The provider runs one request at a time, queues up to 16, and allows each member 4 at once. It caps `max_tokens` (`--max-tokens`, default 4096), aborts a request after 120 s with no output (`--timeout`) and after 600 s in total (`--max-duration`).
-- **The provider stays local.** It refuses a non-loopback upstream unless you pass `--allow-remote-upstream`, and logs `insecure-upstream` if that upstream uses plain HTTP.
-- **Nothing sensitive is logged.** Logs hold event names, key prefixes, request ids and timings. Prompts and completions are never written to disk. Values that came from a peer are quoted, so they can't forge a log line.
-- **Removing a member takes effect at once.** `serve` and `use` reload `team.json` when it changes and disconnect anyone no longer listed. Send the updated file to every member.
-- **Keys are stored like SSH keys without a passphrase.** The private seed is in `~/.potluck/identity.json`, unencrypted. Potluck refuses to start if that file is readable, or its folder writable, by other users. Anyone who can read your home directory as you can use your identity.
-- **Team files are not secrets, but keep them private.** `team.json` holds the topic and member list. `team init` warns if it would be committed to git.
+- Outsiders can't connect, and a rejected outsider never learns a member's IP address.
+- Web pages can't use your local endpoint. DNS rebinding, cross-site requests and non-JSON requests are refused, and `POTLUCK_API_KEY` can require a key.
+- Members can only run inference. Ollama's admin routes are never forwarded, and per-member limits stop one person from holding the GPU.
+- Prompts and completions are never logged.
+
+The full threat model is in [docs/threat-model.md](docs/threat-model.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Measurements
 
@@ -126,41 +163,41 @@ Measured on 2026-10-15 with [`scripts/simnet.sh`](scripts/simnet.sh) and [`scrip
 
 Ollama directly: 16.8 ms median time to first token. Time to provider varies between runs: an earlier run of the same setup measured 4368 ms and 3396 ms.
 
-What this does not cover: both sides still share one public IP, so carrier-grade NAT on a phone hotspot is untested, and the delay applies to the consumer's outgoing traffic only. A two-device rehearsal on separate networks will replace this section.
-
-## Logs
-
-Both commands write one line per event to stderr:
-
-```
-2026-10-14T08:33:10.972Z serving team=demo key=5764c223 upstream=http://127.0.0.1:11434
-2026-10-14T08:33:12.318Z connect peer=56d29cb3 member=laptop-b
-2026-10-14T08:33:36.257Z request peer=56d29cb3 id=6 path=/v1/chat/completions
-2026-10-14T08:33:36.274Z first-chunk peer=56d29cb3 id=6 ms=17
-2026-10-14T08:33:37.245Z end peer=56d29cb3 id=6 status=200 ms=988
-2026-10-14T08:33:45.852Z reject peer=ba11aa2b
-```
+What this does not cover: both sides still share one public IP, so carrier-grade NAT on a phone hotspot is untested, and the delay applies to the consumer's outgoing traffic only. Results from real network pairs are wanted in [#2](https://github.com/jtxmp/potluckllm/issues/2).
 
 ## Limits
 
-- Linux and macOS only. Windows is untested.
-- Your own `potluck use` does not list models from your own `potluck serve`. Call Ollama directly for those.
-- Only chat completions and the model list are forwarded. Embeddings and the legacy completions endpoint are not.
-- Routing picks the first provider that lists a model. There is no load balancing.
-- Some networks block UDP or use NAT that hole-punching cannot cross. Relay fallback is planned (PRD F11).
+- Tested on Linux and macOS (CI runs both). Windows is untested ([#5](https://github.com/jtxmp/potluckllm/issues/5)).
+- Your own `potluck use` does not list models from your own `potluck serve`. Call Ollama directly for those ([#10](https://github.com/jtxmp/potluckllm/issues/10)).
+- Only chat completions and the model list are forwarded. Embeddings are not yet ([#3](https://github.com/jtxmp/potluckllm/issues/3)).
+- Routing picks the first provider that lists a model. There is no load balancing ([#4](https://github.com/jtxmp/potluckllm/issues/4)).
+- Some networks block UDP or use NAT that hole punching cannot cross. There is no relay fallback yet ([#1](https://github.com/jtxmp/potluckllm/issues/1)).
+
+## Roadmap and contributing
+
+The roadmap is the [open issues](https://github.com/jtxmp/potluckllm/issues). Ones that are a good place to start:
+
+- [#2](https://github.com/jtxmp/potluckllm/issues/2) Share your `rehearse.js` results from a real network pair. No code needed.
+- [#3](https://github.com/jtxmp/potluckllm/issues/3) Forward `/v1/embeddings`.
+- [#8](https://github.com/jtxmp/potluckllm/issues/8) and [#9](https://github.com/jtxmp/potluckllm/issues/9) Integration guides for Continue and Open WebUI.
+
+Bigger pieces where help is wanted: relay fallback ([#1](https://github.com/jtxmp/potluckllm/issues/1)), load-aware routing ([#4](https://github.com/jtxmp/potluckllm/issues/4)), Windows ([#5](https://github.com/jtxmp/potluckllm/issues/5)), a Pear app ([#6](https://github.com/jtxmp/potluckllm/issues/6)) and QVAC as an upstream ([#7](https://github.com/jtxmp/potluckllm/issues/7)).
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers setup, a map of the code and the house rules. Development needs no GPU: `pnpm test` runs everything on a local DHT testnet. Questions and ideas go in [Discussions](https://github.com/jtxmp/potluckllm/discussions).
 
 ## Development
 
 ```sh
+pnpm install
 pnpm test                    # integration tests on a local DHT testnet, no GPU or internet needed
-node test/fake-ollama.js     # fake OpenAI-compatible upstream on :11434
+node bin/potluck.js try      # the whole path on one machine, with a fake model
 node scripts/rehearse.js     # measure connect time and latency across real networks (see the file header)
 scripts/simnet.sh --profile hotspot -- <command>   # run a command in a simulated separate network (Linux, no root)
 vhs demo/demo.tape           # re-record the demo GIF (needs vhs, ttyd, tmux, pasta, Ollama)
 git config core.hooksPath .githooks   # scan each commit for secrets (needs gitleaks)
 ```
 
-CI runs the tests on Linux and macOS, `pnpm audit`, and a gitleaks scan of every commit. Dependabot proposes dependency and action updates once a release is 14 days old.
+CI runs the tests on Linux and macOS, `pnpm audit`, and a gitleaks scan of every commit. Dependabot proposes dependency and action updates once a release is 14 days old. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
@@ -168,4 +205,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## How this was built
 
-See [AI-WORKFLOW.md](AI-WORKFLOW.md) for how AI was used for research, scoping and code, including the ideas that were rejected.
+PotluckLLM was scoped and built with Claude Code. [AI-WORKFLOW.md](AI-WORKFLOW.md) covers how AI was used for research, scoping and code, including the ideas that were rejected. The product requirements are in [docs/PRD.md](docs/PRD.md).

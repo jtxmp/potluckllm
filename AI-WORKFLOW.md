@@ -24,7 +24,7 @@ Claude checked each candidate name against npm, GitHub, PyPI and domain registri
 
 ## 4. PRD, then a scored review
 
-Claude drafted [PRD.md](PRD.md), then reviewed it for speed to delivery and scored it 60/100 against a weighted rubric. The changes that followed:
+Claude drafted [the PRD](docs/PRD.md), then reviewed it for speed to delivery and scored it 60/100 against a weighted rubric. The changes that followed:
 
 - Replace Protomux with newline-delimited JSON over the Hyperswarm stream. A spike showed the whole transport fit in about 15 lines and handled two interleaved streams on one connection. The same spike found that a connection without an `error` listener crashed the process on shutdown.
 - Drop the TypeScript build in favour of `// @ts-check`, and drop a `peers` command that would have needed IPC between processes.

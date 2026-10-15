@@ -130,7 +130,7 @@ For the portfolio, track these after launch: GitHub stars, issues opened by peop
 | D4 | Upstream | Ollama's OpenAI-compatible API at `http://127.0.0.1:11434/v1`. | Most common local runtime. Any OpenAI-compatible server (llama.cpp `llama-server`, LM Studio) works the same way. |
 | D5 | Language and tooling | Plain JavaScript ESM with `// @ts-check`, pnpm, vitest. No build step. | Holepunch modules and docs are JS. TypeScript adds a build step and type gaps on untyped modules. |
 | D6 | Dependencies | Runtime: `hyperswarm` only, exact version pin. `b4a` dropped, since Node's `Buffer` covers it. Keys derive from the seed with `node:crypto` (test confirms they match Hyperswarm's). Dev: `vitest`, `hyperdht` (for `hyperdht/testnet`). `pnpm.packageExtensions` adds `b4a` to `bogon@1.3.0`, a HyperDHT dependency that requires it without declaring it. | Every dependency is code we don't control. HyperDHT releases often (6.34.1 published 2026-10-05). |
-| D7 | Test strategy | `test/fake-ollama.js` (fake OpenAI-compatible SSE upstream) is the default dev target. CI runs one vitest integration suite on `hyperdht/testnet`: routing, streaming, firewall rejection of a non-member key, path allow-list, mid-stream disconnect. | Development and CI need no GPU, no Ollama and no internet. Real networks and Ollama are tested once, in the M3 rehearsal. |
+| D7 | Test strategy | `src/fake-upstream.js` (fake OpenAI-compatible SSE upstream, also behind `potluck try`) is the default dev target. CI runs one vitest integration suite on `hyperdht/testnet`: routing, streaming, firewall rejection of a non-member key, path allow-list, mid-stream disconnect. | Development and CI need no GPU, no Ollama and no internet. Real networks and Ollama are tested once, in the M3 rehearsal. |
 
 ## 9. Security and privacy
 
@@ -151,7 +151,7 @@ Transport risk was retired by the D2 spike, so there is no separate spike milest
 | Milestone | Timebox | Exit criteria |
 |---|---|---|
 | M1 Single pair | 1 day | Done 2026-10-14. F1, F4, F5, F9 on the fake upstream, plus parts of F7 (path allow-list) and F8 (1 MB body cap). 17 tests pass on testnet, 5 consecutive clean runs. CLI verified on the public DHT on one machine. CI workflow written, not yet run on GitHub. |
-| M2 Team | 1 day | Done 2026-10-14. F2, F3, F6, F8 complete; F7 completed in M1. 25 tests pass, 5 consecutive clean runs. Queue and timeout tests fail when their feature is disabled (checked). Full demo.md command flow verified on the public DHT on one machine. |
+| M2 Team | 1 day | Done 2026-10-14. F2, F3, F6, F8 complete; F7 completed in M1. 25 tests pass, 5 consecutive clean runs. Queue and timeout tests fail when their feature is disabled (checked). Full docs/demo.md command flow verified on the public DHT on one machine. |
 | M3 Ship | 1 day | In progress. Done: Ollama 0.35.1 with `llama3.2:3b` (100% GPU, bound to 127.0.0.1), end-to-end run through potluck on the public DHT on one machine, README and AI-WORKFLOW.md written, MIT license, repo public with CI passing on Linux and macOS. Simulated separate network (`scripts/simnet.sh`): 5 of 5 starts connected in both profiles, 89.3 ms added time to first token with 80 ms delay and 1% loss. Demo GIF recorded against the simulated network. Remaining: two-device rehearsal on real separate networks (covers carrier-grade NAT, which the simulation cannot), LinkedIn video. Plan: Ollama with a 1B to 3B model on the provider. Rehearsal across the 3 demo network pairs. Section 7 numbers recorded from F9 logs. README with "why P2P" section, threat model and 60 s demo GIF. Repo public. |
 | M4 Stretch | Open | P1 items, then P2 by priority. |
 
@@ -182,6 +182,6 @@ None of these block development. Q1 and Q2 block the public launch only.
 ## 13. Portfolio deliverables
 
 - `README.md`: one-paragraph pitch, demo GIF, quickstart, "why P2P" comparison table, threat model.
-- `PRD.md`: this document, kept current.
+- `docs/PRD.md`: this document, kept current.
 - `AI-WORKFLOW.md`: how AI was used for research, scoping, spikes and code, including ideas rejected and why. The first rejected idea was a P2P team decision log, dropped because P2P was decoration rather than necessary.
 - LinkedIn post: the problem, the 60 s demo, one measured number, and what the AI-assisted process changed about how you scoped it.
