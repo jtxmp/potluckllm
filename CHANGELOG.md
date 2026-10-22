@@ -2,6 +2,10 @@
 
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.2 (2026-10-22)
+
+- README rewritten to state facts only, with a commands and options table. No code changes.
+
 ## 0.1.1 (2026-10-15)
 
 - New package description: "Share access to local LLMs privately, peer-to-peer."
